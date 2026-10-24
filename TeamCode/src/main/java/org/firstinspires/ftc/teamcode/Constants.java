@@ -42,6 +42,12 @@ public class Constants {
         // Mecanum wheels slip sideways, so strafing covers less distance than the encoders think.
         // Tune: strafe the robot 48 inches with a tape measure; if the screen says 40, use 48/40 = 1.2.
         public static final double STRAFE_DISTANCE_MULTIPLIER = 1.0;
+        // Heading comes from the wheel encoders (no IMU), so it needs the robot's size, wheel center to wheel center.
+        // Tune: in TeleOp, spin the robot in place exactly 5 full turns to the left and stop facing the same way.
+        // The Heading on the screen should come back to about 0. If it drifts, fix these numbers:
+        // if the robot thinks it turned TOO FAR, make them BIGGER; not far enough, make them SMALLER.
+        public static final double TRACK_WIDTH_INCHES = 14.0;  // left wheels to right wheels - MEASURE YOURS
+        public static final double WHEEL_BASE_INCHES = 12.0;   // front wheels to back wheels - MEASURE YOURS
     }
 
     // How DriveToPoseCommand drives to a spot.
