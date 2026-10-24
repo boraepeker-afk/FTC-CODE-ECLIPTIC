@@ -35,6 +35,23 @@ public class Constants {
         public static final double NORMAL_SPEED = 1.0;
         public static final double SLOW_SPEED = 0.4;          // while driver 1 holds the right bumper
         public static final double STRAFE_CORRECTION = 1.1;   // strafing is less efficient; this compensates
+
+        // ---- Position tracking with the drive motor encoders ----
+        public static final double WHEEL_DIAMETER_INCHES = 104 / 25.4;  // goBILDA 104 mm mecanum wheels
+        public static final double GEAR_RATIO = 1.0;  // wheel turns per motor turn (1.0 = wheel right on the motor)
+        // Mecanum wheels slip sideways, so strafing covers less distance than the encoders think.
+        // Tune: strafe the robot 48 inches with a tape measure; if the screen says 40, use 48/40 = 1.2.
+        public static final double STRAFE_DISTANCE_MULTIPLIER = 1.0;
+    }
+
+    // How DriveToPoseCommand drives to a spot.
+    public static class PathConstants {
+        public static final double DRIVE_GAIN = 0.05;          // power per inch away (0.05 = full speed at 20 in)
+        public static final double MIN_POWER = 0.06;           // small push so it doesn't stop just short
+        public static final double TURN_GAIN = 0.015;          // turning power per degree off
+        public static final double MAX_TURN = 0.5;
+        public static final double POSITION_TOLERANCE = 1.5;   // inches: "close enough"
+        public static final double HEADING_TOLERANCE = 3.0;    // degrees: "close enough"
     }
 
     public static class VisionConstants {
@@ -65,31 +82,62 @@ public class Constants {
         public static final double READY_TOLERANCE_RPM = 150;
     }
 
+    /*
+     * AUTONOMOUS. 30 seconds. Points: LEAVE the wall (3), tip the HIVE by launching into its
+     * upward Cell (20), PARK in your Loading Zone (5).
+     *
+     * ALL SPOTS ARE MEASURED FROM WHERE THE ROBOT STARTS, written as {x, y, heading}:
+     *   x       = inches FORWARD from the starting spot
+     *   y       = inches to the LEFT (use negative numbers for right)
+     *   heading = degrees to face. 0 = the way the robot faced at the start, 90 = turned left, -90 = turned right
+     * Write them for the BLUE side. On RED, the code mirrors left/right automatically (MIRROR_FOR_RED).
+     * Measure them on a real field with a tape measure, then test and adjust.
+     */
     public static class AutoConstants {
-        // Search: turn in place until a tag is seen. Positive turns right, negative turns left.
-        public static final double SEARCH_TURN = 0.2;
-        public static final long SEARCH_TIMEOUT_MS = 4000;
+        // ---- Spots (BLUE side; placeholders - MEASURE YOURS) ----
+        public static final double[] SHOOT_POSE         = {30, 0, 0};    // where to shoot from, facing the HIVE
+        public static final double[] COLLECT_START_POSE = {20, 30, 90};  // lined up at the start of the row of POLLEN
+        public static final double[] COLLECT_END_POSE   = {20, 54, 90};  // end of the row (drives slowly through it)
+        public static final double[] PARK_POSE          = {12, 12, 0};   // inside your Loading Zone
 
-        // Drive to the target.
-        public static final double DESIRED_DISTANCE = 24.0;  // inches from the camera to the target when it stops
-        public static final double SPEED_GAIN  = 0.02;       // 50% power at 25 inches of error
-        public static final double STRAFE_GAIN = 0.015;      // 37% power at 25 degrees of yaw error
-        public static final double TURN_GAIN   = 0.01;       // 25% power at 25 degrees of bearing error
+        // true = on RED, flip every y and heading (mirror image of the blue path).
+        public static final boolean MIRROR_FOR_RED = true;
+
+        // ---- Speeds ----
+        public static final double DRIVE_SPEED = 0.6;      // normal driving between spots
+        public static final double COLLECT_SPEED = 0.3;    // driving slowly through the POLLEN with the intake on
+        public static final double INTAKE_POWER = 1.0;     // intake while collecting
+
+        // ---- Timeouts: the most time each step may take (milliseconds) ----
+        public static final long DRIVE_TIMEOUT_MS = 4000;
+        public static final long COLLECT_TIMEOUT_MS = 4000;
+        public static final long AIM_TIMEOUT_MS = 1500;    // camera fine-aim at the shooting spot
+        public static final long SPIN_UP_TIMEOUT_MS = 2500; // longest to wait for the flywheel
+        public static final long FEED_MS = 2500;           // intake time to shoot all the balls
+
+        // Only go collect more POLLEN if fewer than this many seconds of auto have gone by.
+        // (The collect trip + second shot + park takes roughly 14 s.)
+        public static final double COLLECT_CUTOFF_S = 14;
+        // Skip ahead and park once this many seconds have gone by.
+        public static final double PARK_BY_S = 26;
+
+        // ---- Shooting ----
+        public static final double AUTO_SHOOT_RPM = ShooterConstants.SHOOT_RPM;
+        public static final double FEED_POWER = 1.0;
+
+        // ---- Camera fine-aim (after the encoders get close) ----
+        public static final boolean USE_CAMERA_AIM = true;
+        public static final double DESIRED_DISTANCE = 24.0;  // inches from the camera to the target when shooting
+        public static final double SPEED_GAIN  = 0.02;
+        public static final double STRAFE_GAIN = 0.015;
+        public static final double TURN_GAIN   = 0.01;
         public static final double MAX_AUTO_SPEED  = 0.5;
         public static final double MAX_AUTO_STRAFE = 0.5;
         public static final double MAX_AUTO_TURN   = 0.3;
         public static final double RANGE_TOLERANCE = 2.0;    // inches
         public static final double ANGLE_TOLERANCE = 3.0;    // degrees
-        public static final long DRIVE_TIMEOUT_MS = 8000;
 
-        // Shooting after lining up with the target.
-        public static final double AUTO_SHOOT_RPM = ShooterConstants.SHOOT_RPM;  // or a different number for auto
-        public static final long SPIN_UP_TIMEOUT_MS = 3000;  // longest to wait for the flywheel to reach speed
-        public static final long FEED_MS = 3000;             // how long to run the intake to feed the balls in
-        public static final double FEED_POWER = 1.0;          // intake power while feeding (0 to 1)
-
-        // If no target is found: drive straight forward for a moment instead.
-        public static final long FALLBACK_DRIVE_MS = 1000;
-        public static final double FALLBACK_POWER = 0.3;
+        // Used by SearchForTargetCommand (not part of the main routine any more).
+        public static final double SEARCH_TURN = 0.2;
     }
 }
