@@ -149,7 +149,7 @@ public class BotContainer {
                 ? "found" : "NOT found - name it \"" + Constants.VisionConstants.CAMERA_NAME + "\" in the configuration");
         if (opMode == Bot.OpMode.TELEOP) {
             telemetry.addData("Intake parts found", intake.getPartsFound());
-            telemetry.addData("Shooter motors found", shooter.getPartsFound());
+            telemetry.addData("Shooter", shooter.getStatus());
             telemetry.addData("Status", "Ready - point the robot away from you, then press Start");
         } else {
             telemetry.addData("Status", "Ready - press Start");
@@ -162,7 +162,7 @@ public class BotContainer {
 
         if (opMode == Bot.OpMode.AUTO) {
             telemetry.addData("Step", autoStep);
-            telemetry.addData("Shooter", "%.0f / %.0f RPM", shooter.getRpm(), shooter.getTargetRpm());
+            telemetry.addData("Shooter", shooter.getStatus());
         } else {
             telemetry.addData("Mode", DriveConstants.FIELD_CENTRIC ? "Field-centric" : "Robot-centric");
             telemetry.addData("Heading (deg)", "%.1f", drive.getHeadingDegrees());
@@ -184,12 +184,7 @@ public class BotContainer {
             telemetry.addData("Slow mode", pilot.getButton(GamepadKeys.Button.RIGHT_BUMPER) ? "ON" : "off");
             telemetry.addData("Intake parts found", intake.getPartsFound());
             telemetry.addData("Intake power", "%.2f", intake.getPower());
-            if (shooter.getTargetRpm() > 0) {
-                telemetry.addData("Shooter", "%s  %.0f / %.0f RPM",
-                        shooter.isAtSpeed() ? "READY" : "spinning up", shooter.getRpm(), shooter.getTargetRpm());
-            } else {
-                telemetry.addData("Shooter", "off (driver 2: right bumper)");
-            }
+            telemetry.addData("Shooter", shooter.getStatus());
         }
         telemetry.update();
     }
