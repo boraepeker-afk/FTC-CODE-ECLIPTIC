@@ -88,6 +88,17 @@ public class Constants {
         public static final double READY_TOLERANCE_RPM = 150;
     }
 
+    // "Simple Auto (backup)": timed, needs no encoders, camera or IMU.
+    public static class SimpleAutoConstants {
+        public static final long START_DELAY_MS = 0;     // wait before moving
+        public static final double DRIVE_POWER = 0.4;    // forward speed (0 to 1)
+        public static final long DRIVE_MS = 1200;        // how long to drive forward. Longer = farther.
+        public static final double SHOOT_RPM = ShooterConstants.SHOOT_RPM;
+        public static final long SPIN_UP_MS = 2500;      // longest to wait for the flywheel
+        public static final long FEED_MS = 3000;         // how long to run the intake to shoot
+        public static final double FEED_POWER = 1.0;
+    }
+
     /*
      * AUTONOMOUS. 30 seconds. Points: LEAVE the wall (3), tip the HIVE by launching into its
      * upward Cell (20), PARK in your Loading Zone (5).
