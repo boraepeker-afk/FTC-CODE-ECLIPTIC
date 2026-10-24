@@ -38,11 +38,16 @@ public class Bot extends Robot {
                 container.configBindings();
                 break;
             case AUTO:
-                schedule(container.getAutonomousCommand());
+                // Nothing yet: the drivers pick settings during Init, then the OpMode calls startAuto().
                 break;
         }
 
         container.showInitTelemetry(opMode);
+    }
+
+    /** Schedules the autonomous routine with the drivers' settings. It runs once you press Start. */
+    public void startAuto(AutoSettings settings) {
+        schedule(container.getAutonomousCommand(settings));
     }
 
     /** Shows what the robot is doing on the Driver Hub. Call once per loop. */

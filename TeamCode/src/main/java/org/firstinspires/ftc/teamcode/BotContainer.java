@@ -5,9 +5,11 @@ import com.arcrobotics.ftclib.command.ConditionalCommand;
 import com.arcrobotics.ftclib.command.InstantCommand;
 import com.arcrobotics.ftclib.command.RunCommand;
 import com.arcrobotics.ftclib.command.SequentialCommandGroup;
+import com.arcrobotics.ftclib.command.WaitCommand;
 import com.arcrobotics.ftclib.command.WaitUntilCommand;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.arcrobotics.ftclib.gamepad.GamepadKeys;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.Constants.AutoConstants;
@@ -15,9 +17,9 @@ import org.firstinspires.ftc.teamcode.Constants.DriveConstants;
 import org.firstinspires.ftc.teamcode.Constants.ShooterConstants;
 import org.firstinspires.ftc.teamcode.commands.AimAtTargetCommand;
 import org.firstinspires.ftc.teamcode.commands.DriveCommand;
+import org.firstinspires.ftc.teamcode.commands.DriveToPoseCommand;
 import org.firstinspires.ftc.teamcode.commands.DriveToTargetCommand;
 import org.firstinspires.ftc.teamcode.commands.IntakeCommand;
-import org.firstinspires.ftc.teamcode.commands.SearchForTargetCommand;
 import org.firstinspires.ftc.teamcode.commands.ShooterCommand;
 import org.firstinspires.ftc.teamcode.subsystems.DriveSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.IntakeSubsystem;
@@ -55,6 +57,7 @@ public class BotContainer {
 
     // Which autonomous step is running, for telemetry.
     private String autoStep = "waiting for Start";
+    private final ElapsedTime autoTimer = new ElapsedTime();
 
     public void setDefaultCommands() {
         drive.setDefaultCommand(new DriveCommand(
@@ -96,49 +99,95 @@ public class BotContainer {
     }
 
     /*
-     * Autonomous:
-     *   1. Turn slowly until the camera sees a target (gives up after SEARCH_TIMEOUT_MS).
-     *   2. Found one: drive up to it and line up in front of it (gives up after DRIVE_TIMEOUT_MS).
-     *      The flywheel turns on before driving, so it's up to speed by the time the robot lines up.
-     *      Then wait for the flywheel to reach speed (at most SPIN_UP_TIMEOUT_MS)
-     *      and run the intake for FEED_MS to feed the balls into the flywheel.
-     *      Didn't: drive straight forward for a moment so the robot still leaves its spot.
-     *   3. Stop everything.
+     * AUTONOMOUS (30 seconds). The spots it drives to are in Constants.AutoConstants.
+     *   1. Wait for the start delay (if any), turn the flywheel on.
+     *   2. Drive to the shooting spot with the encoders.                   -> LEAVE (3 pts)
+     *   3. If the camera sees the target, fine-aim with it. Wait for the flywheel,
+     *      then run the intake to shoot the 4 preloaded POLLEN.             -> HIVE TIP (20 pts)
+     *   4. If there's time (and "collect more" is on): drive through the row of POLLEN with the
+     *      intake running, come back to the shooting spot, aim and shoot again.
+     *   5. Drive to the Loading Zone and stop.                              -> PARK (5 pts)
+     * Every step has a time limit, so one problem can't use up the whole 30 seconds.
      */
-    public Command getAutonomousCommand() {
+    public Command getAutonomousCommand(AutoSettings settings) {
+        boolean mirror = settings.isRed() && AutoConstants.MIRROR_FOR_RED;
+        double[] shootPose        = mirrored(AutoConstants.SHOOT_POSE, mirror);
+        double[] collectStartPose = mirrored(AutoConstants.COLLECT_START_POSE, mirror);
+        double[] collectEndPose   = mirrored(AutoConstants.COLLECT_END_POSE, mirror);
+        double[] parkPose         = mirrored(AutoConstants.PARK_POSE, mirror);
+
+        Command collectAndShootAgain = new SequentialCommandGroup(
+                step("4. going to the POLLEN"),
+                new DriveToPoseCommand(drive, collectStartPose, AutoConstants.DRIVE_SPEED)
+                        .withTimeout(AutoConstants.DRIVE_TIMEOUT_MS),
+                new InstantCommand(() -> intake.setPower(AutoConstants.INTAKE_POWER), intake),
+                step("4. collecting"),
+                new DriveToPoseCommand(drive, collectEndPose, AutoConstants.COLLECT_SPEED)
+                        .withTimeout(AutoConstants.COLLECT_TIMEOUT_MS),
+                new InstantCommand(intake::stop, intake),
+                step("4. back to the shooting spot"),
+                new DriveToPoseCommand(drive, shootPose, AutoConstants.DRIVE_SPEED)
+                        .withTimeout(AutoConstants.DRIVE_TIMEOUT_MS),
+                // Only shoot again if there's still time before parking.
+                new ConditionalCommand(
+                        shootSequence("4"),
+                        new InstantCommand(),
+                        () -> autoTimer.seconds() < AutoConstants.PARK_BY_S));
+
         return new SequentialCommandGroup(
-                new InstantCommand(() -> autoStep = "1. searching for a target"),
-                new SearchForTargetCommand(drive, vision).withTimeout(AutoConstants.SEARCH_TIMEOUT_MS),
+                new InstantCommand(() -> {
+                    autoTimer.reset();
+                    drive.resetPose();
+                }),
+                step("1. start delay"),
+                new WaitCommand(settings.startDelaySeconds * 1000L),
+
+                // Flywheel on now, so it's at speed by the time the robot gets to the shooting spot.
+                new InstantCommand(() -> shooter.setTargetRpm(AutoConstants.AUTO_SHOOT_RPM), shooter),
+                step("2. driving to the shooting spot"),
+                new DriveToPoseCommand(drive, shootPose, AutoConstants.DRIVE_SPEED)
+                        .withTimeout(AutoConstants.DRIVE_TIMEOUT_MS),
+
+                shootSequence("3"),
 
                 new ConditionalCommand(
-                        // Found a target: drive to it and shoot.
-                        new SequentialCommandGroup(
-                                // Turn the flywheel on now so it's at speed by the time the robot lines up.
-                                // It keeps spinning on its own until it's turned off below.
-                                new InstantCommand(() -> shooter.setTargetRpm(AutoConstants.AUTO_SHOOT_RPM), shooter),
+                        collectAndShootAgain,
+                        new InstantCommand(),
+                        () -> settings.collectMore && autoTimer.seconds() < AutoConstants.COLLECT_CUTOFF_S),
 
-                                new InstantCommand(() -> autoStep = "2. driving to the target"),
-                                new DriveToTargetCommand(drive, vision).withTimeout(AutoConstants.DRIVE_TIMEOUT_MS),
-                                new InstantCommand(drive::stop, drive),
-
-                                new InstantCommand(() -> autoStep = "3. waiting for the flywheel"),
-                                new WaitUntilCommand(shooter::isAtSpeed).withTimeout(AutoConstants.SPIN_UP_TIMEOUT_MS),
-
-                                new InstantCommand(() -> autoStep = "4. shooting"),
-                                new RunCommand(() -> intake.setPower(AutoConstants.FEED_POWER), intake)
-                                        .withTimeout(AutoConstants.FEED_MS),
-                                new InstantCommand(intake::stop, intake),
-                                new InstantCommand(shooter::stop, shooter)),
-                        new SequentialCommandGroup(
-                                new InstantCommand(() -> autoStep = "2. no target found - driving forward"),
-                                new RunCommand(() -> drive.drive(AutoConstants.FALLBACK_POWER, 0, 0, 1.0), drive)
-                                        .withTimeout(AutoConstants.FALLBACK_DRIVE_MS)),
-                        vision::hasTarget),
-
-                new InstantCommand(drive::stop, drive),
-                new InstantCommand(intake::stop, intake),
                 new InstantCommand(shooter::stop, shooter),
-                new InstantCommand(() -> autoStep = "done"));
+                new InstantCommand(intake::stop, intake),
+                step("5. parking"),
+                new DriveToPoseCommand(drive, parkPose, AutoConstants.DRIVE_SPEED)
+                        .withTimeout(AutoConstants.DRIVE_TIMEOUT_MS),
+                new InstantCommand(drive::stop, drive),
+                step("done"));
+    }
+
+    // Aim (with the camera if it sees the target), wait for the flywheel, then feed the balls in.
+    private Command shootSequence(String number) {
+        return new SequentialCommandGroup(
+                step(number + ". aiming"),
+                new ConditionalCommand(
+                        new DriveToTargetCommand(drive, vision).withTimeout(AutoConstants.AIM_TIMEOUT_MS),
+                        new InstantCommand(),
+                        () -> AutoConstants.USE_CAMERA_AIM && vision.hasTarget()),
+                new InstantCommand(drive::stop, drive),
+                step(number + ". waiting for the flywheel"),
+                new WaitUntilCommand(shooter::isAtSpeed).withTimeout(AutoConstants.SPIN_UP_TIMEOUT_MS),
+                step(number + ". shooting"),
+                new RunCommand(() -> intake.setPower(AutoConstants.FEED_POWER), intake)
+                        .withTimeout(AutoConstants.FEED_MS),
+                new InstantCommand(intake::stop, intake));
+    }
+
+    private Command step(String name) {
+        return new InstantCommand(() -> autoStep = name);
+    }
+
+    // For RED: flip left/right (y) and the turn direction (heading).
+    private static double[] mirrored(double[] pose, boolean mirror) {
+        return mirror ? new double[]{pose[0], -pose[1], -pose[2]} : pose;
     }
 
     // ---- Driver Hub screen ----
@@ -162,6 +211,9 @@ public class BotContainer {
 
         if (opMode == Bot.OpMode.AUTO) {
             telemetry.addData("Step", autoStep);
+            telemetry.addData("Time", "%.1f s", autoTimer.seconds());
+            telemetry.addData("Position", "x %.1f in, y %.1f in, heading %.0f deg",
+                    drive.getX(), drive.getY(), drive.getPoseHeadingDegrees());
             telemetry.addData("Shooter", shooter.getStatus());
         } else {
             telemetry.addData("Mode", DriveConstants.FIELD_CENTRIC ? "Field-centric" : "Robot-centric");

@@ -8,11 +8,18 @@ import com.qualcomm.robotcore.hardware.IMU;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.Constants;
+import org.firstinspires.ftc.teamcode.Constants.DriveConstants;
 
 /*
  * The drivetrain subsystem: the only class that touches the four drive motors
  * and the Control Hub's built-in IMU (the sensor that knows which way the robot faces).
  * Commands tell it what to do by calling drive(), driveFieldCentric() and stop().
+ *
+ * It also keeps track of WHERE the robot is (a "localizer"), using the encoders inside the
+ * four drive motors plus the IMU for heading. Position is measured in inches from where the
+ * robot was when the position was last reset (start of autonomous):
+ *   x = forward from the start, y = to the LEFT of the start, heading = degrees, left turn is positive.
+ * This needs the drive motors' encoder cables plugged in.
  * Get it with DriveSubsystem.getInstance().
  *
  * The four motor names below must match your Driver Station configuration exactly.
@@ -52,6 +59,13 @@ public class DriveSubsystem extends SubsystemBase {
     private final DcMotor backRight;
     private final IMU imu;
 
+    // ---- Position tracking (localizer) ----
+    private final double ticksPerInch;
+    private double x = 0, y = 0;            // inches
+    private double headingOffsetDeg = 0;    // so resetPose() can set heading to 0 without touching the IMU
+    private int lastFL, lastBL, lastFR, lastBR;
+    private double lastHeadingRad;
+
     private DriveSubsystem() {
         HardwareMap hardwareMap = Constants.hardwareMap;
         frontLeft  = hardwareMap.get(DcMotor.class, "front_left");
@@ -78,6 +92,15 @@ public class DriveSubsystem extends SubsystemBase {
 
         // Whichever way the robot faces when you press Init becomes "forward" on the field.
         imu.resetYaw();
+
+        // Zero the wheel encoders. The motors still run on plain power (RUN_WITHOUT_ENCODER),
+        // the encoders are only read to track position.
+        for (DcMotor motor : new DcMotor[]{frontLeft, backLeft, frontRight, backRight}) {
+            motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+            motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        }
+        ticksPerInch = calculateTicksPerInch();
+        resetPose();
     }
 
     /**
@@ -146,4 +169,77 @@ public class DriveSubsystem extends SubsystemBase {
     public double getBackLeftPower()   { return backLeft.getPower(); }
     public double getFrontRightPower() { return frontRight.getPower(); }
     public double getBackRightPower()  { return backRight.getPower(); }
+
+    // =============================== Position tracking ===============================
+
+    // Runs automatically every loop: adds up how far each wheel turned since last loop.
+    @Override
+    public void periodic() {
+        int fl = frontLeft.getCurrentPosition();
+        int bl = backLeft.getCurrentPosition();
+        int fr = frontRight.getCurrentPosition();
+        int br = backRight.getCurrentPosition();
+        double heading = getPoseHeadingRadians();
+
+        double dFL = (fl - lastFL) / ticksPerInch;
+        double dBL = (bl - lastBL) / ticksPerInch;
+        double dFR = (fr - lastFR) / ticksPerInch;
+        double dBR = (br - lastBR) / ticksPerInch;
+        lastFL = fl; lastBL = bl; lastFR = fr; lastBR = br;
+
+        // Mecanum math: how far the robot moved forward and to the right, in its own view.
+        double forward = (dFL + dBL + dFR + dBR) / 4.0;
+        double right   = (dFL - dBL - dFR + dBR) / 4.0 * DriveConstants.STRAFE_DISTANCE_MULTIPLIER;
+
+        // Turn that into field directions using the average heading during this loop.
+        double h = lastHeadingRad + angleWrap(heading - lastHeadingRad) / 2.0;
+        x += forward * Math.cos(h) + right * Math.sin(h);
+        y += forward * Math.sin(h) - right * Math.cos(h);
+        lastHeadingRad = heading;
+    }
+
+    /** Makes the robot's current spot (0, 0) facing heading 0. Call at the start of autonomous. */
+    public void resetPose() {
+        lastFL = frontLeft.getCurrentPosition();
+        lastBL = backLeft.getCurrentPosition();
+        lastFR = frontRight.getCurrentPosition();
+        lastBR = backRight.getCurrentPosition();
+        headingOffsetDeg = getHeadingDegrees();
+        lastHeadingRad = 0;
+        x = 0;
+        y = 0;
+    }
+
+    /** Inches forward from the starting spot. */
+    public double getX() { return x; }
+
+    /** Inches to the LEFT of the starting spot. */
+    public double getY() { return y; }
+
+    /** Degrees turned since the starting spot. Left (counterclockwise) is positive. */
+    public double getPoseHeadingDegrees() {
+        return Math.toDegrees(angleWrap(Math.toRadians(getHeadingDegrees() - headingOffsetDeg)));
+    }
+
+    private double getPoseHeadingRadians() {
+        return Math.toRadians(getPoseHeadingDegrees());
+    }
+
+    /** Keeps an angle between -180 and 180 degrees (in radians). */
+    public static double angleWrap(double radians) {
+        while (radians > Math.PI) radians -= 2 * Math.PI;
+        while (radians < -Math.PI) radians += 2 * Math.PI;
+        return radians;
+    }
+
+    // Encoder counts per inch of wheel travel. The counts per motor turn come from the motor type
+    // picked in the robot configuration, so pick the right goBILDA motor there.
+    private double calculateTicksPerInch() {
+        double ticksPerRev = frontLeft.getMotorType().getTicksPerRev();
+        if (ticksPerRev <= 0) {
+            ticksPerRev = 537.7;  // goBILDA 312 RPM motor, as a fallback
+        }
+        double wheelCircumference = Math.PI * DriveConstants.WHEEL_DIAMETER_INCHES;
+        return ticksPerRev * DriveConstants.GEAR_RATIO / wheelCircumference;
+    }
 }
