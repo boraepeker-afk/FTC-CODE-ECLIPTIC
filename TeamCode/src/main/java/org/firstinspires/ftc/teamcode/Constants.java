@@ -31,7 +31,7 @@ public class Constants {
 
     public static class DriveConstants {
         // true = field-centric (forward = away from the driver), false = robot-centric (forward = robot's front)
-        public static final boolean FIELD_CENTRIC = true;
+        public static final boolean FIELD_CENTRIC = false;
         public static final double NORMAL_SPEED = 1.0;
         public static final double SLOW_SPEED = 0.4;          // while driver 1 holds the right bumper
         public static final double STRAFE_CORRECTION = 1.1;   // strafing is less efficient; this compensates
