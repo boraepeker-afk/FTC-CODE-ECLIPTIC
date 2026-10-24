@@ -52,6 +52,12 @@ public class Constants {
     }
 
     public static class ShooterConstants {
+        // true = hold an exact speed (needs the motor's encoder cable plugged in).
+        // false = just run at SHOOT_POWER. Use false to test if the shooter won't run.
+        public static final boolean USE_ENCODER = true;
+        public static final double SHOOT_POWER = 0.8;   // only used when USE_ENCODER is false (0 to 1)
+        public static final long SPIN_UP_MS = 1500;     // without the encoder: how long before "READY"
+
         // Flywheel speed while shooting, in RPM. Start here and raise it if shots fall short,
         // lower it if they fly too far. (A bare goBILDA 6000 RPM motor tops out near 6000.)
         public static final double SHOOT_RPM = 3000;

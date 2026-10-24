@@ -5,22 +5,22 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.Constants;
 import org.firstinspires.ftc.teamcode.Constants.ShooterConstants;
 
 /*
- * The flywheel shooter: one or two motors that spin the flywheel.
+ * The flywheel shooter: one motor that spins the flywheel.
  *
- * It uses VELOCITY control: you ask for a speed in RPM and the Control Hub
- * adds or removes power by itself to hold that speed, even as the battery drains
- * or a game piece slows the wheel down. That makes shots land in the same place every time.
- * This needs the motor's ENCODER cable plugged into the hub next to the motor's power port.
+ * Name in the robot configuration:  "shooter"
+ * If it isn't in the configuration, the robot still runs and the screen says so.
  *
- * Names in the robot configuration:
- *   "shooter"         - flywheel motor
- *   "shooter_2"       - second flywheel motor (only if your flywheel has two)
- * Any motor that isn't in the configuration is skipped, so the robot still runs without it.
+ * Two ways to run it (pick with ShooterConstants.USE_ENCODER):
+ *   true  - VELOCITY control: holds an exact speed in RPM, so shots are consistent.
+ *           Needs the motor's ENCODER cable plugged into the hub next to its power port.
+ *   false - plain POWER: just runs the motor at SHOOT_POWER (0 to 1). Use this to test
+ *           the shooter if the encoder cable isn't plugged in or isn't working.
  *
  * Get it with ShooterSubsystem.getInstance().
  */
@@ -43,49 +43,45 @@ public class ShooterSubsystem extends SubsystemBase {
     }
     // ---------------------------------------------------------------------------------------------
 
-    private final DcMotorEx shooter;     // null if not in the configuration
-    private final DcMotorEx shooter2;    // null if not in the configuration
+    private final DcMotorEx shooter;   // null if not in the configuration
 
+    private boolean on = false;
     private double targetRpm = 0;
+    private final ElapsedTime timeOn = new ElapsedTime();
 
     private ShooterSubsystem() {
         HardwareMap hardwareMap = Constants.hardwareMap;
-        shooter  = hardwareMap.tryGet(DcMotorEx.class, "shooter");
-        shooter2 = hardwareMap.tryGet(DcMotorEx.class, "shooter_2");
+        shooter = hardwareMap.tryGet(DcMotorEx.class, "shooter");
 
-        // If the flywheel spins backwards, flip that motor between FORWARD and REVERSE.
-        // With two motors facing each other, one is usually REVERSE.
-        setUp(shooter, DcMotorSimple.Direction.FORWARD);
-        setUp(shooter2, DcMotorSimple.Direction.REVERSE);
-
+        if (shooter != null) {
+            // If the flywheel spins the wrong way, change FORWARD to REVERSE.
+            shooter.setDirection(DcMotorSimple.Direction.FORWARD);
+            shooter.setMode(ShooterConstants.USE_ENCODER
+                    ? DcMotor.RunMode.RUN_USING_ENCODER
+                    : DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+            // FLOAT lets the heavy flywheel coast down when turned off instead of slamming to a stop.
+            shooter.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        }
         stop();
     }
 
-    private static void setUp(DcMotorEx motor, DcMotorSimple.Direction direction) {
-        if (motor == null) {
-            return;
-        }
-        motor.setDirection(direction);
-        motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        // FLOAT lets the heavy flywheel coast down when turned off instead of slamming to a stop.
-        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-    }
-
-    /** Spins the flywheel up to this many RPM and holds it there. 0 turns it off. */
+    /** Spins the flywheel up to this many RPM (or SHOOT_POWER without the encoder). 0 turns it off. */
     public void setTargetRpm(double rpm) {
+        boolean turningOn = rpm > 0 && !on;
+        on = rpm > 0;
         targetRpm = rpm;
-        setRpm(shooter, rpm);
-        setRpm(shooter2, rpm);
-    }
-
-    private static void setRpm(DcMotorEx motor, double rpm) {
-        if (motor == null) {
+        if (turningOn) {
+            timeOn.reset();
+        }
+        if (shooter == null) {
             return;
         }
-        if (rpm == 0) {
-            motor.setPower(0);   // just let it coast
+        if (!on) {
+            shooter.setPower(0);   // just let it coast
+        } else if (ShooterConstants.USE_ENCODER) {
+            shooter.setVelocity(rpm / 60.0 * ticksPerRev());
         } else {
-            motor.setVelocity(rpm / 60.0 * ticksPerRev(motor));
+            shooter.setPower(ShooterConstants.SHOOT_POWER);
         }
     }
 
@@ -93,38 +89,58 @@ public class ShooterSubsystem extends SubsystemBase {
         setTargetRpm(0);
     }
 
-    /** How fast the flywheel is really spinning, in RPM (0 if there's no shooter motor). */
+    public boolean isOn() {
+        return on;
+    }
+
+    /** How fast the flywheel is really spinning, in RPM (needs the encoder cable). */
     public double getRpm() {
-        if (shooter != null) {
-            return shooter.getVelocity() / ticksPerRev(shooter) * 60.0;
-        }
-        if (shooter2 != null) {
-            return shooter2.getVelocity() / ticksPerRev(shooter2) * 60.0;
-        }
-        return 0;
+        return shooter == null ? 0 : shooter.getVelocity() / ticksPerRev() * 60.0;
     }
 
     public double getTargetRpm() {
         return targetRpm;
     }
 
-    /** True when the flywheel is on and close enough to its target speed to shoot. */
+    /** True when the flywheel is on and ready to shoot. */
     public boolean isAtSpeed() {
-        return targetRpm > 0
-                && Math.abs(getRpm() - targetRpm) <= ShooterConstants.READY_TOLERANCE_RPM;
+        if (!on || shooter == null) {
+            return false;
+        }
+        if (!ShooterConstants.USE_ENCODER) {
+            // Without the encoder we can't measure the speed, so just give it time to spin up.
+            return timeOn.milliseconds() >= ShooterConstants.SPIN_UP_MS;
+        }
+        return Math.abs(getRpm() - targetRpm) <= ShooterConstants.READY_TOLERANCE_RPM;
     }
 
-    /** Lists which shooter motors were found, for telemetry. */
-    public String getPartsFound() {
-        if (shooter != null && shooter2 != null) return "2 motors";
-        if (shooter != null || shooter2 != null) return "1 motor";
-        return "none (not in the configuration yet)";
+    /** One line for the Driver Hub that says what the shooter is doing, or what's wrong. */
+    public String getStatus() {
+        if (shooter == null) {
+            return "NOT FOUND - name the flywheel motor \"shooter\" in the configuration";
+        }
+        if (!on) {
+            return "off (driver 2: right bumper)";
+        }
+        if (!ShooterConstants.USE_ENCODER) {
+            return (isAtSpeed() ? "READY" : "spinning up") + " - power "
+                    + Math.round(ShooterConstants.SHOOT_POWER * 100) + "% (no encoder)";
+        }
+        String speed = Math.round(getRpm()) + " / " + Math.round(targetRpm) + " RPM";
+        if (isAtSpeed()) {
+            return "READY  " + speed;
+        }
+        if (timeOn.milliseconds() > 1500 && Math.abs(getRpm()) < 50) {
+            // Told to spin for 1.5 s but the encoder still reads nothing.
+            return "speed reads 0 - check the ENCODER cable, or set USE_ENCODER = false  " + speed;
+        }
+        return "spinning up  " + speed;
     }
 
-    // Encoder counts per motor turn. It comes from the motor type you pick in the configuration,
+    // Encoder counts per motor turn. It comes from the motor type picked in the configuration,
     // so pick the right goBILDA motor there.
-    private static double ticksPerRev(DcMotorEx motor) {
-        double ticks = motor.getMotorType().getTicksPerRev();
+    private double ticksPerRev() {
+        double ticks = shooter.getMotorType().getTicksPerRev();
         return ticks > 0 ? ticks : 28.0;  // 28 = a bare goBILDA motor, as a safe fallback
     }
 }
