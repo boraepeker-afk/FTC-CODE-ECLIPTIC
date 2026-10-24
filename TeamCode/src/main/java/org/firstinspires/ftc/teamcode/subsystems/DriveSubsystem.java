@@ -1,29 +1,24 @@
 package org.firstinspires.ftc.teamcode.subsystems;
 
 import com.arcrobotics.ftclib.command.SubsystemBase;
-import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.HardwareMap;
-import com.qualcomm.robotcore.hardware.IMU;
 
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.teamcode.Constants;
 import org.firstinspires.ftc.teamcode.Constants.DriveConstants;
 
 /*
- * The drivetrain subsystem: the only class that touches the four drive motors
- * and the Control Hub's built-in IMU (the sensor that knows which way the robot faces).
+ * The drivetrain subsystem: the only class that touches the four drive motors.
  * Commands tell it what to do by calling drive(), driveFieldCentric() and stop().
  *
- * It also keeps track of WHERE the robot is (a "localizer"), using the encoders inside the
- * four drive motors plus the IMU for heading. Position is measured in inches from where the
- * robot was when the position was last reset (start of autonomous):
+ * It also keeps track of WHERE the robot is and WHICH WAY IT FACES (a "localizer"), using only
+ * the encoders inside the four drive motors (no IMU). Position is measured in inches from where
+ * the robot was when the position was last reset (start of autonomous):
  *   x = forward from the start, y = to the LEFT of the start, heading = degrees, left turn is positive.
  * This needs the drive motors' encoder cables plugged in.
  * Get it with DriveSubsystem.getInstance().
  *
  * The four motor names below must match your Driver Station configuration exactly.
- * The IMU is named "imu" automatically when you scan the Control Hub.
  */
 public class DriveSubsystem extends SubsystemBase {
 
@@ -44,27 +39,16 @@ public class DriveSubsystem extends SubsystemBase {
     }
     // ---------------------------------------------------------------------------------------------
 
-    // ---- SET THESE TO MATCH HOW YOUR CONTROL HUB IS MOUNTED ON THE ROBOT ----
-    // Which way the REV logo on the Control Hub points: UP, DOWN, FORWARD, BACKWARD, LEFT or RIGHT.
-    private static final RevHubOrientationOnRobot.LogoFacingDirection LOGO_DIRECTION =
-            RevHubOrientationOnRobot.LogoFacingDirection.UP;
-    // Which way the Control Hub's USB ports point: UP, DOWN, FORWARD, BACKWARD, LEFT or RIGHT.
-    private static final RevHubOrientationOnRobot.UsbFacingDirection USB_DIRECTION =
-            RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
-    // ---------------------------------------------------------------------------
-
     private final DcMotor frontLeft;
     private final DcMotor backLeft;
     private final DcMotor frontRight;
     private final DcMotor backRight;
-    private final IMU imu;
 
     // ---- Position tracking (localizer) ----
     private final double ticksPerInch;
     private double x = 0, y = 0;            // inches
-    private double headingOffsetDeg = 0;    // so resetPose() can set heading to 0 without touching the IMU
+    private double heading = 0;             // radians, left turn positive
     private int lastFL, lastBL, lastFR, lastBR;
-    private double lastHeadingRad;
 
     private DriveSubsystem() {
         HardwareMap hardwareMap = Constants.hardwareMap;
@@ -86,12 +70,6 @@ public class DriveSubsystem extends SubsystemBase {
         backLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         frontRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         backRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
-
-        imu = hardwareMap.get(IMU.class, "imu");
-        imu.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(LOGO_DIRECTION, USB_DIRECTION)));
-
-        // Whichever way the robot faces when you press Init becomes "forward" on the field.
-        imu.resetYaw();
 
         // Zero the wheel encoders. The motors still run on plain power (RUN_WITHOUT_ENCODER),
         // the encoders are only read to track position.
@@ -143,18 +121,18 @@ public class DriveSubsystem extends SubsystemBase {
         drive(robotForward, robotStrafe, turn, speed);
     }
 
-    /** Makes the direction the robot is facing right now count as "forward". */
+    /** Makes the direction the robot is facing right now count as "forward" (heading 0). */
     public void resetHeading() {
-        imu.resetYaw();
+        heading = 0;
     }
 
-    /** Which way the robot faces, in radians. Turning left (counterclockwise) is positive. */
+    /** Which way the robot faces, in radians, from the wheel encoders. Turning left is positive. */
     public double getHeadingRadians() {
-        return imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
+        return heading;
     }
 
     public double getHeadingDegrees() {
-        return imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES);
+        return Math.toDegrees(heading);
     }
 
     public void stop() {
@@ -179,7 +157,6 @@ public class DriveSubsystem extends SubsystemBase {
         int bl = backLeft.getCurrentPosition();
         int fr = frontRight.getCurrentPosition();
         int br = backRight.getCurrentPosition();
-        double heading = getPoseHeadingRadians();
 
         double dFL = (fl - lastFL) / ticksPerInch;
         double dBL = (bl - lastBL) / ticksPerInch;
@@ -191,11 +168,16 @@ public class DriveSubsystem extends SubsystemBase {
         double forward = (dFL + dBL + dFR + dBR) / 4.0;
         double right   = (dFL - dBL - dFR + dBR) / 4.0 * DriveConstants.STRAFE_DISTANCE_MULTIPLIER;
 
+        // How much it turned: the right wheels go forward and the left wheels go back on a left turn.
+        // The robot's width and length set how far the wheels roll for each degree of turning.
+        double turn = (dFR + dBR - dFL - dBL)
+                / (2.0 * (DriveConstants.TRACK_WIDTH_INCHES + DriveConstants.WHEEL_BASE_INCHES));
+
         // Turn that into field directions using the average heading during this loop.
-        double h = lastHeadingRad + angleWrap(heading - lastHeadingRad) / 2.0;
+        double h = heading + turn / 2.0;
         x += forward * Math.cos(h) + right * Math.sin(h);
         y += forward * Math.sin(h) - right * Math.cos(h);
-        lastHeadingRad = heading;
+        heading = angleWrap(heading + turn);
     }
 
     /** Makes the robot's current spot (0, 0) facing heading 0. Call at the start of autonomous. */
@@ -204,8 +186,7 @@ public class DriveSubsystem extends SubsystemBase {
         lastBL = backLeft.getCurrentPosition();
         lastFR = frontRight.getCurrentPosition();
         lastBR = backRight.getCurrentPosition();
-        headingOffsetDeg = getHeadingDegrees();
-        lastHeadingRad = 0;
+        heading = 0;
         x = 0;
         y = 0;
     }
@@ -218,11 +199,7 @@ public class DriveSubsystem extends SubsystemBase {
 
     /** Degrees turned since the starting spot. Left (counterclockwise) is positive. */
     public double getPoseHeadingDegrees() {
-        return Math.toDegrees(angleWrap(Math.toRadians(getHeadingDegrees() - headingOffsetDeg)));
-    }
-
-    private double getPoseHeadingRadians() {
-        return Math.toRadians(getPoseHeadingDegrees());
+        return Math.toDegrees(heading);
     }
 
     /** Keeps an angle between -180 and 180 degrees (in radians). */
