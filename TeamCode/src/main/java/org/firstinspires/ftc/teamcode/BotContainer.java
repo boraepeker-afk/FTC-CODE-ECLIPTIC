@@ -194,6 +194,7 @@ public class BotContainer {
 
     public void showInitTelemetry(Bot.OpMode opMode) {
         Telemetry telemetry = Constants.telemetry;
+        telemetry.addData("Heading from", drive.getHeadingSource());
         telemetry.addData("Camera", vision.isCameraConnected()
                 ? "found" : "NOT found - name it \"" + Constants.VisionConstants.CAMERA_NAME + "\" in the configuration");
         if (opMode == Bot.OpMode.TELEOP) {
@@ -212,6 +213,7 @@ public class BotContainer {
         if (opMode == Bot.OpMode.AUTO) {
             telemetry.addData("Step", autoStep);
             telemetry.addData("Time", "%.1f s", autoTimer.seconds());
+            telemetry.addData("Heading from", drive.getHeadingSource());
             telemetry.addData("Position", "x %.1f in, y %.1f in, heading %.0f deg",
                     drive.getX(), drive.getY(), drive.getPoseHeadingDegrees());
             telemetry.addData("Shooter", shooter.getStatus());
