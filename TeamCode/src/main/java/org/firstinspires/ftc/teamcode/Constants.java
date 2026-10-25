@@ -83,7 +83,7 @@ public class Constants {
 
         // Flywheel speed while shooting, in RPM. Start here and raise it if shots fall short,
         // lower it if they fly too far. (A bare goBILDA 6000 RPM motor tops out near 6000.)
-        public static final double SHOOT_RPM = 3000;
+        public static final double SHOOT_RPM = 1000;  // team setting - keep at 1000
         // How close to SHOOT_RPM counts as "READY" on the Driver Hub screen.
         public static final double READY_TOLERANCE_RPM = 150;
     }
