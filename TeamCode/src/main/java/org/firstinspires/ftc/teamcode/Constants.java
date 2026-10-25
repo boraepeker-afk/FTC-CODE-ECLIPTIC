@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode;
 
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
@@ -42,7 +43,16 @@ public class Constants {
         // Mecanum wheels slip sideways, so strafing covers less distance than the encoders think.
         // Tune: strafe the robot 48 inches with a tape measure; if the screen says 40, use 48/40 = 1.2.
         public static final double STRAFE_DISTANCE_MULTIPLIER = 1.0;
-        // Heading comes from the wheel encoders (no IMU), so it needs the robot's size, wheel center to wheel center.
+        // ---- IMU (optional). Set these to how the Control Hub is mounted on the robot. ----
+        // Which way the side with the REV logo faces, and which way the USB ports point:
+        // UP, DOWN, FORWARD, BACKWARD, LEFT or RIGHT. (They can't point the same way or opposite.)
+        // Check: in TeleOp, turn the robot LEFT by hand - Heading on the screen should go UP.
+        public static final RevHubOrientationOnRobot.LogoFacingDirection HUB_LOGO_DIRECTION =
+                RevHubOrientationOnRobot.LogoFacingDirection.UP;
+        public static final RevHubOrientationOnRobot.UsbFacingDirection HUB_USB_DIRECTION =
+                RevHubOrientationOnRobot.UsbFacingDirection.FORWARD;
+
+        // Without the IMU, heading comes from the wheel encoders, so it needs the robot's size, wheel center to wheel center.
         // Tune: in TeleOp, spin the robot in place exactly 5 full turns to the left and stop facing the same way.
         // The Heading on the screen should come back to about 0. If it drifts, fix these numbers:
         // if the robot thinks it turned TOO FAR, make them BIGGER; not far enough, make them SMALLER.

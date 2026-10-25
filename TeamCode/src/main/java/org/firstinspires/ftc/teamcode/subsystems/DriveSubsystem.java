@@ -1,8 +1,12 @@
 package org.firstinspires.ftc.teamcode.subsystems;
 
 import com.arcrobotics.ftclib.command.SubsystemBase;
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.IMU;
+
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 import org.firstinspires.ftc.teamcode.Constants;
 import org.firstinspires.ftc.teamcode.Constants.DriveConstants;
@@ -11,8 +15,10 @@ import org.firstinspires.ftc.teamcode.Constants.DriveConstants;
  * The drivetrain subsystem: the only class that touches the four drive motors.
  * Commands tell it what to do by calling drive(), driveFieldCentric() and stop().
  *
- * It also keeps track of WHERE the robot is and WHICH WAY IT FACES (a "localizer"), using only
- * the encoders inside the four drive motors (no IMU). Position is measured in inches from where
+ * It also keeps track of WHERE the robot is and WHICH WAY IT FACES (a "localizer"), using the
+ * encoders inside the four drive motors. For heading it uses the Control Hub's IMU if the
+ * configuration has one named "imu" (more accurate); if not, it works it out from the wheel
+ * encoders instead, so the robot still runs. Position is measured in inches from where
  * the robot was when the position was last reset (start of autonomous):
  *   x = forward from the start, y = to the LEFT of the start, heading = degrees, left turn is positive.
  * This needs the drive motors' encoder cables plugged in.
@@ -48,6 +54,8 @@ public class DriveSubsystem extends SubsystemBase {
     private final double ticksPerInch;
     private double x = 0, y = 0;            // inches
     private double heading = 0;             // radians, left turn positive
+    private final IMU imu;                  // null if there's no "imu" in the configuration
+    private double imuOffsetRad = 0;        // IMU reading that counts as heading 0
     private int lastFL, lastBL, lastFR, lastBR;
 
     private DriveSubsystem() {
@@ -78,6 +86,19 @@ public class DriveSubsystem extends SubsystemBase {
             motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         }
         ticksPerInch = calculateTicksPerInch();
+
+        // The IMU is optional. If it's in the configuration, use it for heading.
+        IMU foundImu = hardwareMap.tryGet(IMU.class, "imu");
+        if (foundImu != null) {
+            try {
+                foundImu.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+                        DriveConstants.HUB_LOGO_DIRECTION, DriveConstants.HUB_USB_DIRECTION)));
+                foundImu.resetYaw();
+            } catch (RuntimeException e) {
+                foundImu = null;  // couldn't start it (for example a bad orientation setting): use the encoders
+            }
+        }
+        imu = foundImu;
         resetPose();
     }
 
@@ -124,6 +145,18 @@ public class DriveSubsystem extends SubsystemBase {
     /** Makes the direction the robot is facing right now count as "forward" (heading 0). */
     public void resetHeading() {
         heading = 0;
+        if (imu != null) {
+            imuOffsetRad = readImuRadians();
+        }
+    }
+
+    /** Where the heading comes from, for the Driver Hub screen. */
+    public String getHeadingSource() {
+        return imu != null ? "IMU" : "wheel encoders (no \"imu\" in the configuration)";
+    }
+
+    private double readImuRadians() {
+        return imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
     }
 
     /** Which way the robot faces, in radians, from the wheel encoders. Turning left is positive. */
@@ -173,6 +206,11 @@ public class DriveSubsystem extends SubsystemBase {
         double turn = (dFR + dBR - dFL - dBL)
                 / (2.0 * (DriveConstants.TRACK_WIDTH_INCHES + DriveConstants.WHEEL_BASE_INCHES));
 
+        // With the IMU, use its (more accurate) reading for how much the robot turned.
+        if (imu != null) {
+            turn = angleWrap(angleWrap(readImuRadians() - imuOffsetRad) - heading);
+        }
+
         // Turn that into field directions using the average heading during this loop.
         double h = heading + turn / 2.0;
         x += forward * Math.cos(h) + right * Math.sin(h);
@@ -186,7 +224,7 @@ public class DriveSubsystem extends SubsystemBase {
         lastBL = backLeft.getCurrentPosition();
         lastFR = frontRight.getCurrentPosition();
         lastBR = backRight.getCurrentPosition();
-        heading = 0;
+        resetHeading();
         x = 0;
         y = 0;
     }
