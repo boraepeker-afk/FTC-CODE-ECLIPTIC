@@ -12,19 +12,37 @@ import org.firstinspires.ftc.teamcode.Constants.ShooterConstants;
 
 /*
  * The flywheel shooter: one motor that spins the flywheel.
- *
  * Name in the robot configuration:  "shooter"
- * If it isn't in the configuration, the robot still runs and the screen says so.
  *
- * Two ways to run it (pick with ShooterConstants.USE_ENCODER):
- *   true  - VELOCITY control: holds an exact speed in RPM, so shots are consistent.
- *           Needs the motor's ENCODER cable plugged into the hub next to its power port.
- *   false - plain POWER: just runs the motor at SHOOT_POWER (0 to 1). Use this to test
- *           the shooter if the encoder cable isn't plugged in or isn't working.
+ * HOW THE SPEED IS CONTROLLED (our own simple controller, not the hub's built-in one):
+ *   1. BASE POWER: target RPM / the motor's top RPM. For 1000 RPM on a 6000 RPM motor that's 0.17.
+ *      This alone gets the flywheel close to the right speed, with no sensor at all.
+ *   2. SMALL CORRECTION (only if the encoder is working): if the wheel is slower than the target,
+ *      add a little power; if faster, take a little away. A slow "catch-up" part also builds up
+ *      over time to close any small steady gap. The whole correction is LIMITED to
+ *      MAX_CORRECTION, so the flywheel can never run away to full speed.
+ *   3. SAFETY CHECK: if the encoder reads nothing or reads backwards while the motor is running,
+ *      the correction is switched off and it just uses the base power. The Driver Hub says so.
+ *
+ * Why: the hub's built-in speed control keeps adding power until the encoder reading matches.
+ * With a missing, unplugged or backwards encoder reading it never matches, so the flywheel
+ * kept speeding up no matter what SHOOT_RPM was set to.
+ *
+ * Settings used from Constants.ShooterConstants: SHOOT_RPM, USE_ENCODER, READY_TOLERANCE_RPM, SPIN_UP_MS.
+ * The motor's top RPM comes from the motor type picked in the robot configuration,
+ * so pick the exact goBILDA motor there (the RPM is printed on the motor's label).
  *
  * Get it with ShooterSubsystem.getInstance().
  */
 public class ShooterSubsystem extends SubsystemBase {
+
+    // ---- Tuning for the speed controller ----
+    private static final double CORRECTION_GAIN = 0.0004;  // extra power per RPM of error (0.0004 = +0.04 at 100 RPM slow)
+    private static final double CATCH_UP_GAIN = 0.0003;    // how fast the slow "catch-up" part builds (per RPM per second)
+    private static final double MAX_CORRECTION = 0.20;     // the correction can never add or remove more than this
+    private static final double FALLBACK_MAX_RPM = 6000;   // used if the configuration doesn't give the motor's top RPM
+    private static final long ENCODER_CHECK_MS = 750;      // how long after starting before checking the encoder
+    // -------------------------------------------
 
     // ---- One shared copy of this subsystem (same idea as getInstance() in the Astrobots code) ----
     private static ShooterSubsystem instance = null;
@@ -44,49 +62,103 @@ public class ShooterSubsystem extends SubsystemBase {
     // ---------------------------------------------------------------------------------------------
 
     private final DcMotorEx shooter;   // null if not in the configuration
+    private final double motorMaxRpm;
 
     private boolean on = false;
     private double targetRpm = 0;
+    private double power = 0;
+    private boolean encoderProblem = false;
+    private double catchUp = 0;
     private final ElapsedTime timeOn = new ElapsedTime();
+    private final ElapsedTime loopTimer = new ElapsedTime();
 
     private ShooterSubsystem() {
         HardwareMap hardwareMap = Constants.hardwareMap;
         shooter = hardwareMap.tryGet(DcMotorEx.class, "shooter");
 
+        double maxRpm = FALLBACK_MAX_RPM;
         if (shooter != null) {
             // If the flywheel spins the wrong way, change FORWARD to REVERSE.
             shooter.setDirection(DcMotorSimple.Direction.FORWARD);
-            shooter.setMode(ShooterConstants.USE_ENCODER
-                    ? DcMotor.RunMode.RUN_USING_ENCODER
-                    : DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+            // RUN_WITHOUT_ENCODER = WE set the power. The hub's own speed control is OFF.
+            // (The encoder can still be read for the speed.)
+            shooter.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+            shooter.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
             // FLOAT lets the heavy flywheel coast down when turned off instead of slamming to a stop.
             shooter.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            double configured = shooter.getMotorType().getMaxRPM();
+            if (configured > 0) {
+                maxRpm = configured;
+            }
         }
+        motorMaxRpm = maxRpm;
         stop();
     }
 
-    /** Spins the flywheel up to this many RPM (or SHOOT_POWER without the encoder). 0 turns it off. */
+    /** Spins the flywheel at this many RPM. 0 turns it off. */
     public void setTargetRpm(double rpm) {
         boolean turningOn = rpm > 0 && !on;
         on = rpm > 0;
-        targetRpm = rpm;
+        targetRpm = Math.max(0, rpm);
         if (turningOn) {
             timeOn.reset();
+            loopTimer.reset();
+            encoderProblem = false;
+            catchUp = 0;
         }
-        if (shooter == null) {
-            return;
-        }
-        if (!on) {
-            shooter.setPower(0);   // just let it coast
-        } else if (ShooterConstants.USE_ENCODER) {
-            shooter.setVelocity(rpm / 60.0 * ticksPerRev());
-        } else {
-            shooter.setPower(ShooterConstants.SHOOT_POWER);
-        }
+        update();
     }
 
     public void stop() {
         setTargetRpm(0);
+    }
+
+    // Runs automatically every loop: works out the power for this loop.
+    @Override
+    public void periodic() {
+        update();
+    }
+
+    private void update() {
+        if (shooter == null) {
+            return;
+        }
+        if (!on) {
+            power = 0;
+            shooter.setPower(0);   // just let it coast
+            return;
+        }
+
+        // 1. Base power from the target speed.
+        double basePower = targetRpm / motorMaxRpm;
+        double newPower = basePower;
+
+        if (ShooterConstants.USE_ENCODER) {
+            double rpm = getRpm();
+
+            // 3. Safety check, once the flywheel has had time to start turning.
+            if (timeOn.milliseconds() > ENCODER_CHECK_MS
+                    && (rpm < -50 || Math.abs(rpm) < targetRpm * 0.05)) {
+                encoderProblem = true;   // stays off until the flywheel is turned off and on again
+            }
+
+            // 2. Small, limited correction.
+            if (!encoderProblem) {
+                double error = targetRpm - rpm;
+                double dt = Math.min(loopTimer.seconds(), 0.1);
+                catchUp = clip(catchUp + error * CATCH_UP_GAIN * dt, MAX_CORRECTION);
+                double correction = clip(error * CORRECTION_GAIN + catchUp, MAX_CORRECTION);
+                newPower = basePower + correction;
+            }
+        }
+
+        loopTimer.reset();
+        power = Math.max(0, Math.min(1, newPower));
+        shooter.setPower(power);
+    }
+
+    private static double clip(double value, double limit) {
+        return Math.max(-limit, Math.min(limit, value));
     }
 
     public boolean isOn() {
@@ -107,8 +179,8 @@ public class ShooterSubsystem extends SubsystemBase {
         if (!on || shooter == null) {
             return false;
         }
-        if (!ShooterConstants.USE_ENCODER) {
-            // Without the encoder we can't measure the speed, so just give it time to spin up.
+        if (!ShooterConstants.USE_ENCODER || encoderProblem) {
+            // Can't trust the speed reading, so just give it time to spin up.
             return timeOn.milliseconds() >= ShooterConstants.SPIN_UP_MS;
         }
         return Math.abs(getRpm() - targetRpm) <= ShooterConstants.READY_TOLERANCE_RPM;
@@ -122,23 +194,20 @@ public class ShooterSubsystem extends SubsystemBase {
         if (!on) {
             return "off (driver 2: right bumper)";
         }
+        String ready = isAtSpeed() ? "READY" : "spinning up";
+        String powerText = "power " + Math.round(power * 100) + "%";
         if (!ShooterConstants.USE_ENCODER) {
-            return (isAtSpeed() ? "READY" : "spinning up") + " - power "
-                    + Math.round(ShooterConstants.SHOOT_POWER * 100) + "% (no encoder)";
+            return ready + "  " + powerText + " (no encoder)";
         }
         String speed = Math.round(getRpm()) + " / " + Math.round(targetRpm) + " RPM";
-        if (isAtSpeed()) {
-            return "READY  " + speed;
+        if (encoderProblem) {
+            return ready + "  " + powerText + "  ENCODER PROBLEM (reads " + Math.round(getRpm())
+                    + " RPM) - check the encoder cable is in the SAME port number as the motor";
         }
-        if (timeOn.milliseconds() > 1500 && Math.abs(getRpm()) < 50) {
-            // Told to spin for 1.5 s but the encoder still reads nothing.
-            return "speed reads 0 - check the ENCODER cable, or set USE_ENCODER = false  " + speed;
-        }
-        return "spinning up  " + speed;
+        return ready + "  " + speed + "  " + powerText;
     }
 
-    // Encoder counts per motor turn. It comes from the motor type picked in the configuration,
-    // so pick the right goBILDA motor there.
+    // Encoder counts per motor turn, from the motor type picked in the configuration.
     private double ticksPerRev() {
         double ticks = shooter.getMotorType().getTicksPerRev();
         return ticks > 0 ? ticks : 28.0;  // 28 = a bare goBILDA motor, as a safe fallback
