@@ -96,6 +96,36 @@ public class Constants {
         public static final double SHOOT_RPM = 1000;  // team setting - keep at 1000
         // How close to SHOOT_RPM counts as "READY" on the Driver Hub screen.
         public static final double READY_TOLERANCE_RPM = 150;
+
+        // ---- The flywheel MOTOR itself (read the label on the motor) ----
+        // These used to come from the motor type picked in the robot configuration. If that was
+        // set to the wrong motor, the math said "full power" and the flywheel shot straight to top speed.
+        // goBILDA bare motor (5203, 1:1, "6000 RPM"):  MOTOR_MAX_RPM = 6000, TICKS_PER_REV = 28
+        // goBILDA 1620 RPM (3.7:1):                    MOTOR_MAX_RPM = 1620, TICKS_PER_REV = 103.8
+        // goBILDA 1150 RPM (5.2:1):                    MOTOR_MAX_RPM = 1150, TICKS_PER_REV = 145.1
+        public static final double MOTOR_MAX_RPM = 6000;
+        public static final double TICKS_PER_REV = 28;
+
+        // ---- PID speed control (only used when USE_ENCODER is true) ----
+        // power = kF * target  +  kP * error  +  kI * (error added up over time)  +  kD * (how fast error changes)
+        // kF: the "base" power per RPM. 1 / MOTOR_MAX_RPM is the starting guess.
+        //     Tune FIRST, with kP = kI = kD = 0: raise kF until the flywheel settles just under SHOOT_RPM.
+        // kP: then raise kP until it reaches SHOOT_RPM quickly and recovers after a shot. Too big = it surges up and down.
+        // kI: small, only if it always settles a little short. Leave 0 to start.
+        // kD: usually 0 for a flywheel.
+        public static final double kF = 1.0 / MOTOR_MAX_RPM;
+        public static final double kP = 0.0005;
+        public static final double kI = 0.0;
+        public static final double kD = 0.0;
+        // The I part can never add or take away more than this much power.
+        public static final double MAX_I_POWER = 0.15;
+
+        // ---- Gentle spin-up ----
+        // The target speed climbs by this many RPM per second instead of jumping straight there.
+        // 2000 = 0 to 1000 RPM in half a second. Smaller = softer start. Very big = no ramp.
+        public static final double RAMP_RPM_PER_SEC = 2000;
+        // The flywheel never gets more power than this (0 to 1). A safety cap.
+        public static final double MAX_POWER = 1.0;
     }
 
     // "Simple Auto (backup)": timed, needs no encoders, camera or IMU.
