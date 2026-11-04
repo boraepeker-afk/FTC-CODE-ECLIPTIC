@@ -119,6 +119,10 @@ public class Constants {
         public static final double kD = 0.0;
         // The I part can never add or take away more than this much power.
         public static final double MAX_I_POWER = 0.15;
+        // P + I + D together can never add more than this much power on top of the kF power.
+        // Stops a bad or unplugged encoder (reads 0) from making the flywheel surge.
+        // If the flywheel can't reach SHOOT_RPM even with a well-tuned kF, raise this a little.
+        public static final double MAX_FEEDBACK_POWER = 0.25;
 
         // ---- Gentle spin-up ----
         // The target speed climbs by this many RPM per second instead of jumping straight there.
