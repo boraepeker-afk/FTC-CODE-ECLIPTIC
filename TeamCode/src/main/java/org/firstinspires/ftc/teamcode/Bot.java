@@ -4,6 +4,7 @@ import com.arcrobotics.ftclib.command.Robot;
 
 import org.firstinspires.ftc.teamcode.subsystems.DriveSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.IntakeSubsystem;
+import org.firstinspires.ftc.teamcode.subsystems.PedroDriveSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.ShooterSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.VisionSubsystem;
 
@@ -29,6 +30,7 @@ public class Bot extends Robot {
         IntakeSubsystem.clearInstance();
         ShooterSubsystem.clearInstance();
         VisionSubsystem.clearInstance();
+        PedroDriveSubsystem.clearInstance();
 
         container = new BotContainer();
 
@@ -48,6 +50,11 @@ public class Bot extends Robot {
     /** Schedules the autonomous routine with the drivers' settings. It runs once you press Start. */
     public void startAuto(AutoSettings settings) {
         schedule(container.getAutonomousCommand(settings));
+    }
+
+    /** Same, but the Pedro Pathing version of the autonomous. */
+    public void startPedroAuto(AutoSettings settings) {
+        schedule(container.getPedroAutonomousCommand(settings));
     }
 
     /** Shows what the robot is doing on the Driver Hub. Call once per loop. */

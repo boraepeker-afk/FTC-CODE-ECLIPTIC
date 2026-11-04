@@ -19,7 +19,7 @@ import java.util.regex.Pattern
 
 android {
 
-    compileSdkVersion 30
+    compileSdk 34  // Pedro Pathing's quickstart uses 34
 
     signingConfigs {
         release {

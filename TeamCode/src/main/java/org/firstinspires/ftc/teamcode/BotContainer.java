@@ -19,10 +19,14 @@ import org.firstinspires.ftc.teamcode.commands.AimAtTargetCommand;
 import org.firstinspires.ftc.teamcode.commands.DriveCommand;
 import org.firstinspires.ftc.teamcode.commands.DriveToPoseCommand;
 import org.firstinspires.ftc.teamcode.commands.DriveToTargetCommand;
+import org.firstinspires.ftc.teamcode.commands.FollowPathCommand;
 import org.firstinspires.ftc.teamcode.commands.IntakeCommand;
+import org.firstinspires.ftc.teamcode.commands.PedroAimCommand;
 import org.firstinspires.ftc.teamcode.commands.ShooterCommand;
+import org.firstinspires.ftc.teamcode.pedro.PedroConstants;
 import org.firstinspires.ftc.teamcode.subsystems.DriveSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.IntakeSubsystem;
+import org.firstinspires.ftc.teamcode.subsystems.PedroDriveSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.ShooterSubsystem;
 import org.firstinspires.ftc.teamcode.subsystems.VisionSubsystem;
 
@@ -164,6 +168,101 @@ public class BotContainer {
                 step("done"));
     }
 
+    /*
+     * PEDRO PATHING AUTONOMOUS. Same plan and the same spots (Constants.AutoConstants) as above,
+     * but Pedro Pathing drives the robot between the spots instead of DriveToPoseCommand:
+     *   1. Start delay, flywheel on.
+     *   2. Pedro drives to the shooting spot.                                -> LEAVE
+     *   3. Camera fine-aims at the target if it sees it, wait for the flywheel, shoot.  -> HIVE TIP
+     *   4. If there's time: drive through the row of POLLEN with the intake on, come back, aim, shoot.
+     *   5. Pedro drives to the Loading Zone.                                 -> PARK
+     * Pedro must be tuned first (PedroConstants). Until then this routine only shoots from where it starts.
+     */
+    public Command getPedroAutonomousCommand(AutoSettings settings) {
+        boolean mirror = settings.isRed() && AutoConstants.MIRROR_FOR_RED;
+        double[] shootPose        = mirrored(AutoConstants.SHOOT_POSE, mirror);
+        double[] collectStartPose = mirrored(AutoConstants.COLLECT_START_POSE, mirror);
+        double[] collectEndPose   = mirrored(AutoConstants.COLLECT_END_POSE, mirror);
+        double[] parkPose         = mirrored(AutoConstants.PARK_POSE, mirror);
+
+        if (!PedroConstants.FORESIGHT_TUNED) {
+            // Not tuned yet: don't let Pedro drive with someone else's numbers. Just shoot the preloads.
+            return new SequentialCommandGroup(
+                    new InstantCommand(autoTimer::reset),
+                    step("PEDRO NOT TUNED - only shooting, not driving (see PedroConstants)"),
+                    new WaitCommand(settings.startDelaySeconds * 1000L),
+                    new InstantCommand(() -> shooter.setTargetRpm(AutoConstants.AUTO_SHOOT_RPM), shooter),
+                    new WaitUntilCommand(shooter::isAtSpeed).withTimeout(AutoConstants.SPIN_UP_TIMEOUT_MS),
+                    new RunCommand(() -> intake.setPower(AutoConstants.FEED_POWER), intake)
+                            .withTimeout(AutoConstants.FEED_MS),
+                    new InstantCommand(intake::stop, intake),
+                    new InstantCommand(shooter::stop, shooter),
+                    step("done (not tuned)"));
+        }
+
+        PedroDriveSubsystem pedro = PedroDriveSubsystem.getInstance();
+
+        Command collectAndShootAgain = new SequentialCommandGroup(
+                step("4. going to the POLLEN"),
+                pedroGoTo(pedro, collectStartPose, AutoConstants.DRIVE_SPEED, AutoConstants.DRIVE_TIMEOUT_MS),
+                new InstantCommand(() -> intake.setPower(AutoConstants.INTAKE_POWER), intake),
+                step("4. collecting"),
+                pedroGoTo(pedro, collectEndPose, AutoConstants.COLLECT_SPEED, AutoConstants.COLLECT_TIMEOUT_MS),
+                new InstantCommand(intake::stop, intake),
+                step("4. back to the shooting spot"),
+                pedroGoTo(pedro, shootPose, AutoConstants.DRIVE_SPEED, AutoConstants.DRIVE_TIMEOUT_MS),
+                new ConditionalCommand(
+                        pedroShootSequence(pedro, "4"),
+                        new InstantCommand(),
+                        () -> autoTimer.seconds() < AutoConstants.PARK_BY_S));
+
+        return new SequentialCommandGroup(
+                new InstantCommand(() -> {
+                    autoTimer.reset();
+                    pedro.resetPose();  // where the robot is now = (0, 0), heading 0
+                }, pedro),
+                step("1. start delay"),
+                new WaitCommand(settings.startDelaySeconds * 1000L),
+
+                new InstantCommand(() -> shooter.setTargetRpm(AutoConstants.AUTO_SHOOT_RPM), shooter),
+                step("2. driving to the shooting spot"),
+                pedroGoTo(pedro, shootPose, AutoConstants.DRIVE_SPEED, AutoConstants.DRIVE_TIMEOUT_MS),
+
+                pedroShootSequence(pedro, "3"),
+
+                new ConditionalCommand(
+                        collectAndShootAgain,
+                        new InstantCommand(),
+                        () -> settings.collectMore && autoTimer.seconds() < AutoConstants.COLLECT_CUTOFF_S),
+
+                new InstantCommand(shooter::stop, shooter),
+                new InstantCommand(intake::stop, intake),
+                step("5. parking"),
+                pedroGoTo(pedro, parkPose, AutoConstants.DRIVE_SPEED, AutoConstants.DRIVE_TIMEOUT_MS),
+                step("done"));
+    }
+
+    // Pedro drives in a straight line from wherever the robot is to {x, y, heading}.
+    private static Command pedroGoTo(PedroDriveSubsystem pedro, double[] pose, double maxSpeed, long timeoutMs) {
+        return FollowPathCommand.goTo(pedro, pose[0], pose[1], pose[2], maxSpeed).withTimeout(timeoutMs);
+    }
+
+    // Camera fine-aim through Pedro (if it sees the target), wait for the flywheel, then feed the balls in.
+    private Command pedroShootSequence(PedroDriveSubsystem pedro, String number) {
+        return new SequentialCommandGroup(
+                step(number + ". aiming"),
+                new ConditionalCommand(
+                        new PedroAimCommand(pedro, vision).withTimeout(AutoConstants.AIM_TIMEOUT_MS),
+                        new InstantCommand(),
+                        () -> AutoConstants.USE_CAMERA_AIM && vision.hasTarget()),
+                step(number + ". waiting for the flywheel"),
+                new WaitUntilCommand(shooter::isAtSpeed).withTimeout(AutoConstants.SPIN_UP_TIMEOUT_MS),
+                step(number + ". shooting"),
+                new RunCommand(() -> intake.setPower(AutoConstants.FEED_POWER), intake)
+                        .withTimeout(AutoConstants.FEED_MS),
+                new InstantCommand(intake::stop, intake));
+    }
+
     // Aim (with the camera if it sees the target), wait for the flywheel, then feed the balls in.
     private Command shootSequence(String number) {
         return new SequentialCommandGroup(
@@ -214,8 +313,14 @@ public class BotContainer {
             telemetry.addData("Step", autoStep);
             telemetry.addData("Time", "%.1f s", autoTimer.seconds());
             telemetry.addData("Heading from", drive.getHeadingSource());
-            telemetry.addData("Position", "x %.1f in, y %.1f in, heading %.0f deg",
-                    drive.getX(), drive.getY(), drive.getPoseHeadingDegrees());
+            PedroDriveSubsystem pedro = PedroDriveSubsystem.getIfCreated();
+            if (pedro != null) {
+                telemetry.addData("Pedro position", "x %.1f in, y %.1f in, heading %.0f deg  (%s)",
+                        pedro.getX(), pedro.getY(), pedro.getHeadingDegrees(), pedro.getMode());
+            } else {
+                telemetry.addData("Position", "x %.1f in, y %.1f in, heading %.0f deg",
+                        drive.getX(), drive.getY(), drive.getPoseHeadingDegrees());
+            }
             telemetry.addData("Shooter", shooter.getStatus());
         } else {
             telemetry.addData("Mode", DriveConstants.FIELD_CENTRIC ? "Field-centric" : "Robot-centric");

@@ -174,6 +174,9 @@ public class ShooterSubsystem extends SubsystemBase {
         double feedback = ShooterConstants.kP * error
                 + ShooterConstants.kI * integral
                 + ShooterConstants.kD * derivative;
+        // Cap the correction so a wrong speed reading can't push the flywheel to full power.
+        feedback = Math.max(-ShooterConstants.MAX_FEEDBACK_POWER,
+                Math.min(ShooterConstants.MAX_FEEDBACK_POWER, feedback));
 
         setPower(feedforward + feedback);
     }
