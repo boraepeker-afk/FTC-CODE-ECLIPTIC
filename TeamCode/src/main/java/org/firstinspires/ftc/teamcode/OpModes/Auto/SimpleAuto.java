@@ -19,7 +19,8 @@ import org.firstinspires.ftc.teamcode.subsystems.ShooterSubsystem;
  * BACKUP AUTONOMOUS - no encoders, no camera, no IMU needed. Everything is timed.
  *   1. Flywheel on, drive forward for DRIVE_MS (leaves the wall = 3 points).
  *   2. Wait for the flywheel, then run the intake to shoot the preloaded POLLEN.
- *   3. Stop everything.
+ *   3. Back up (PARK_BACK_MS), then strafe sideways (PARK_STRAFE_MS) to park in the Loading Zone.
+ *   4. Stop everything.
  * Numbers are in Constants.SimpleAutoConstants. Line the robot up aimed at the HIVE before Start.
  */
 @Autonomous(name = "Simple Auto (backup)")
@@ -56,10 +57,21 @@ public class SimpleAuto extends CommandOpMode {
 
                 new InstantCommand(intake::stop, intake),
                 new InstantCommand(shooter::stop, shooter),
+
+                new InstantCommand(() -> step = "5. backing up to park"),
+                new RunCommand(() -> drive.drive(-SimpleAutoConstants.PARK_BACK_POWER, 0, 0, 1.0), drive)
+                        .withTimeout(SimpleAutoConstants.PARK_BACK_MS),
+                new InstantCommand(drive::stop, drive),
+                new InstantCommand(() -> step = "6. strafing to park"),
+                new RunCommand(() -> drive.drive(0, SimpleAutoConstants.PARK_STRAFE_POWER, 0, 1.0), drive)
+                        .withTimeout(SimpleAutoConstants.PARK_STRAFE_MS),
+
                 new InstantCommand(drive::stop, drive),
                 new InstantCommand(() -> step = "done")));
 
-        telemetry.addData("Simple Auto", "drive forward %d ms, then shoot. Press Start.", SimpleAutoConstants.DRIVE_MS);
+        telemetry.addData("Simple Auto", "drive forward %d ms, shoot, back up %d ms, strafe %d ms. Press Start.",
+                SimpleAutoConstants.DRIVE_MS, SimpleAutoConstants.PARK_BACK_MS,
+                SimpleAutoConstants.PARK_STRAFE_POWER == 0 ? 0 : SimpleAutoConstants.PARK_STRAFE_MS);
         telemetry.update();
     }
 

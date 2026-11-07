@@ -141,6 +141,16 @@ public class Constants {
         public static final long SPIN_UP_MS = 2500;      // longest to wait for the flywheel
         public static final long FEED_MS = 3000;         // how long to run the intake to shoot
         public static final double FEED_POWER = 1.0;
+
+        // ---- Park after shooting ----
+        // Drive BACKWARD for PARK_BACK_MS, then strafe sideways for PARK_STRAFE_MS.
+        // Longer time = farther. Set a time to 0 to skip that part.
+        public static final double PARK_BACK_POWER = 0.4;   // backward speed (0 to 1)
+        public static final long PARK_BACK_MS = 700;
+        // Sideways: POSITIVE = strafe RIGHT, NEGATIVE = strafe LEFT. Flip the sign for the other alliance.
+        // 0 = no strafing, just back up.
+        public static final double PARK_STRAFE_POWER = 0.0;
+        public static final long PARK_STRAFE_MS = 800;
     }
 
     /*
